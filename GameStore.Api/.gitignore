@@ -1,0 +1,9 @@
+bin/
+obj/
+*.db
+*.db-shm
+*.db-wal
+*.log
+.vscode/
+appsettings.json
+!appsettings.Development.json

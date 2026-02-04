@@ -1,0 +1,6 @@
+.vscode/
+.idea/
+*.sln
+*.suo
+*.user
+.DS_Store
