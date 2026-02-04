@@ -17,6 +17,15 @@ var app = builder.Build();
 app.UseCors();
 app.MapGamesEndpoints();
 app.MapGenresEndpoints();
-app.MigrateDatabase();
+
+try 
+{
+    app.MigrateDatabase();
+}
+catch (Exception ex)
+{
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogError(ex, "An error occurred while migrating the database.");
+}
 
 app.Run();

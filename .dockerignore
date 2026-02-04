@@ -9,3 +9,6 @@
 Dockerfile*
 docker-compose*
 README.md
+**/*.db
+**/*.db-shm
+**/*.db-wal
