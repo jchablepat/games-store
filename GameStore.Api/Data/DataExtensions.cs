@@ -14,13 +14,11 @@ public static class DataExtensions
         using var scope = app.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<GameStoreContext>();
         
-        // If we are using Postgres (likely in production), we might want to skip migrations if they are incompatible
-        // or ensure the database is created.
-        // For simple prototyping on Render, EnsureCreated is safer if migrations are SQLite-specific.
         var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-        var databaseUrl = configuration["DATABASE_URL"];
+        var databaseProvider = configuration["DatabaseProvider"] ?? "SQLite";
 
-        if (!string.IsNullOrEmpty(databaseUrl))
+        // Check if we are explicitly using PostgreSQL or if DATABASE_URL is set (legacy/Render support)
+        if (databaseProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrEmpty(configuration["DATABASE_URL"]))
         {
              // In production with Postgres, just ensure created to avoid migration conflicts
              dbContext.Database.EnsureCreated();
@@ -39,27 +37,59 @@ public static class DataExtensions
     public static void AddGameStoreDb(this WebApplicationBuilder builder)
     {
         Action<DbContextOptionsBuilder> configureDbContext;
+        var databaseProvider = builder.Configuration["DatabaseProvider"] ?? "SQLite";
         var databaseUrl = builder.Configuration["DATABASE_URL"];
-
-        if (!string.IsNullOrEmpty(databaseUrl))
+        
+        // Determine if we should use PostgreSQL
+        if (databaseProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrEmpty(databaseUrl))
         {
             // Use PostgreSQL
-            var databaseUri = new Uri(databaseUrl);
-            var userInfo = databaseUri.UserInfo.Split(':');
-            var connectionString = $"Host={databaseUri.Host};Port={databaseUri.Port};Database={databaseUri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
+            string connectionString;
             
-            configureDbContext = options => options.UseNpgsql(connectionString)
-                                                   .UseSeeding(SeedData);
+            // Priority 1: DATABASE_URL (Environment Variable - e.g., Render)
+            if (!string.IsNullOrEmpty(databaseUrl))
+            {
+                connectionString = ConvertUrlToConnectionString(databaseUrl);
+            }
+            // Priority 2: PostgreSQLConnection (AppSettings)
+            else
+            {
+                var configConnString = builder.Configuration.GetConnectionString("PostgreSQLConnection");
+                if (string.IsNullOrEmpty(configConnString))
+                {
+                     throw new InvalidOperationException("PostgreSQL provider selected but no connection string found in 'PostgreSQLConnection' or 'DATABASE_URL'.");
+                }
+
+                // Check if the config connection string is actually a URI (e.g. copied from Render to appsettings)
+                if (Uri.TryCreate(configConnString, UriKind.Absolute, out var uri) && (uri.Scheme == "postgres" || uri.Scheme == "postgresql"))
+                {
+                    connectionString = ConvertUrlToConnectionString(configConnString);
+                }
+                else
+                {
+                    // Assume it's a standard Npgsql connection string
+                    connectionString = configConnString;
+                }
+            }
+            
+            configureDbContext = options => options.UseNpgsql(connectionString).UseSeeding(SeedData);
         }
         else
         {
-            // Use SQLite (Local fallback)
-            var connectionString = builder.Configuration.GetConnectionString("GameStoreConnection");
-            configureDbContext = options => options.UseSqlite(connectionString)
-                                                   .UseSeeding(SeedData);
+            // Use SQLite (Default/Local fallback)
+            var connectionString = builder.Configuration.GetConnectionString("SQLiteConnection");
+            configureDbContext = options => options.UseSqlite(connectionString).UseSeeding(SeedData);
         }
 
         builder.Services.AddDbContext<GameStoreContext>(configureDbContext);
+    }
+
+    private static string ConvertUrlToConnectionString(string url)
+    {
+        var databaseUri = new Uri(url);
+        var userInfo = databaseUri.UserInfo.Split(':');
+        var port = databaseUri.Port == -1 ? 5432 : databaseUri.Port;
+        return $"Host={databaseUri.Host};Port={port};Database={databaseUri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
     }
 
     private static void SeedData(DbContext ctx, bool _)
